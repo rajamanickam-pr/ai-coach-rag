@@ -42,6 +42,7 @@ client/.cache/
 collection_db/
 my_chroma_db/
 *.sqlite3
+data/uploads/
 
 # OS files
 .DS_Store

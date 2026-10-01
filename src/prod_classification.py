@@ -6,13 +6,13 @@ client = Anthropic()
 model = "claude-haiku-4-5-20251001" 
 delimiter = "####"
 
-def chat_completion(messages,system,model=model,max_tokens=500,temperature=0.7):
+def chat_completion(messages, system, model=model, max_tokens=500, temperature=0.7):
     response = client.messages.create(
         model=model,
         messages=messages,
         max_tokens=max_tokens,
         system=system,
-        extra_body={"temperature": temperature}
+        extra_body={"temperature": temperature},
     )
     return response.content[0].text
 

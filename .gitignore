@@ -20,6 +20,12 @@ venv/
 env/
 .python-version
 
+# Frontend dependencies and build output
+client/node_modules/
+client/dist/
+client/.vite/
+client/.cache/
+
 # Local configuration and secrets
 .env
 .env.*

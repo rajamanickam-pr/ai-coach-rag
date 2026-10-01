@@ -1,0 +1,19 @@
+.app-shell {
+  background:
+    radial-gradient(circle at top left, rgba(34, 211, 238, 0.18), transparent 25%),
+    radial-gradient(circle at bottom right, rgba(168, 85, 247, 0.2), transparent 30%),
+    rgba(2, 6, 23, 0.92);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.6);
+  border-radius: 999px;
+}

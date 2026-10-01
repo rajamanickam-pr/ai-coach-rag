@@ -9,6 +9,9 @@ authors = [
 requires-python = ">=3.13"
 dependencies = []
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [project.scripts]
 ai-coach-rag = "ai_coach_rag:main"
 

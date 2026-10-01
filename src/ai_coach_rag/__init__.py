@@ -1,0 +1,1 @@
+print("Hello from ai_coach_rag package!")

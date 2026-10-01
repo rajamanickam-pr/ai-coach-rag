@@ -1,0 +1,42 @@
+# Python bytecode and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+build/
+dist/
+wheels/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and tool environments
+.venv/
+venv/
+env/
+.python-version
+
+# Local configuration and secrets
+.env
+.env.*
+*.env
+
+# Jupyter / editor artifacts
+.ipynb_checkpoints/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local generated databases and vector stores
+collection_db/
+my_chroma_db/
+*.sqlite3
+
+# OS files
+.DS_Store
+Thumbs.db

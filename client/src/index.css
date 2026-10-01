@@ -1,11 +1,11 @@
 @import 'tailwindcss';
 
 :root {
-  font-family: Inter, 'Segoe UI', sans-serif;
+  font-family: 'DM Sans', 'Avenir Next', sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.9);
-  background: #020817;
+  color: #1e2a25;
+  background: #f2f5f0;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -24,10 +24,7 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top, rgba(34, 211, 238, 0.2), transparent 30%),
-    radial-gradient(circle at bottom right, rgba(217, 70, 239, 0.2), transparent 35%),
-    #020817;
+  background: #f2f5f0;
 }
 
 button,

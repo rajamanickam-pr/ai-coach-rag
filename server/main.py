@@ -1,4 +1,3 @@
-import hmac
 import hashlib
 import json
 import logging
@@ -9,15 +8,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session, joinedload
 from starlette.concurrency import run_in_threadpool
 
 from server.database import SessionLocal, engine, get_db
-from server.models import Conversation, ConversationMessage, Document, LoginSession, LoginThrottle, Role, User
+from server.models import Document, LoginSession, LoginThrottle, Role, User
+from server.api.conversations import router as conversations_router
+from server.api.dependencies import require_csrf
 from server.pgvector_rag import answer_question_with_anthropic, hybrid_search, ingest_document
 from server.security import (
     CSRF_COOKIE,
@@ -80,9 +81,10 @@ app.add_middleware(
         "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
     ).split(","),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-CSRF-Token"],
 )
+app.include_router(conversations_router)
 
 
 class LoginRequest(BaseModel):
@@ -97,18 +99,6 @@ class UserCreateRequest(BaseModel):
     role: str = Field(pattern="^(admin|member)$")
 
 
-class ConversationCreateRequest(BaseModel):
-    title: str = Field(default="New conversation", min_length=1, max_length=200)
-    collection_name: str = Field(default="karumegam_collection", min_length=3, max_length=63)
-
-
-class AskRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    question: str = Field(min_length=1, max_length=4000)
-    collection_name: str = Field(default="karumegam_collection", min_length=3, max_length=63)
-
-
 def validate_collection_name(collection_name: str) -> str:
     if not COLLECTION_NAME_PATTERN.fullmatch(collection_name):
         raise HTTPException(
@@ -116,12 +106,6 @@ def validate_collection_name(collection_name: str) -> str:
             detail="Collection name must be 3-63 characters using letters, numbers, underscores, or hyphens.",
         )
     return collection_name
-
-
-def require_csrf(request: Request, x_csrf_token: str | None = Header(default=None)) -> None:
-    cookie_token = request.cookies.get(CSRF_COOKIE)
-    if not cookie_token or not x_csrf_token or not hmac.compare_digest(cookie_token, x_csrf_token):
-        raise HTTPException(status_code=403, detail="CSRF validation failed. Refresh the page and try again.")
 
 
 @app.middleware("http")
@@ -279,157 +263,6 @@ def create_user(
     db.commit()
     logger.info("User created", extra={"user_id": str(user.id), "role": role.name})
     return {"id": str(user.id), "username": user.username, "email": user.email, "role": role.name}
-
-
-@app.get("/api/conversations")
-def list_conversations(
-    user: User = Depends(require_permission("conversations:read")),
-    db: Session = Depends(get_db),
-):
-    conversations = db.scalars(
-        select(Conversation)
-        .where(Conversation.user_id == user.id)
-        .order_by(Conversation.updated_at.desc(), Conversation.created_at.desc())
-    ).all()
-    return {
-        "conversations": [
-            {
-                "id": str(conversation.id),
-                "title": conversation.title,
-                "collection_name": conversation.collection_name,
-                "created_at": conversation.created_at,
-                "updated_at": conversation.updated_at,
-            }
-            for conversation in conversations
-        ]
-    }
-
-
-@app.post("/api/conversations", status_code=201)
-def create_conversation(
-    payload: ConversationCreateRequest,
-    _csrf: None = Depends(require_csrf),
-    user: User = Depends(require_permission("conversations:write")),
-    db: Session = Depends(get_db),
-):
-    collection_name = validate_collection_name(payload.collection_name)
-    conversation = Conversation(user_id=user.id, title=payload.title.strip(), collection_name=collection_name)
-    db.add(conversation)
-    db.commit()
-    db.refresh(conversation)
-    return {"id": str(conversation.id), "title": conversation.title, "collection_name": conversation.collection_name}
-
-
-def get_owned_conversation(db: Session, conversation_id: UUID, user_id: UUID, lock: bool = False) -> Conversation:
-    statement = select(Conversation).where(Conversation.id == conversation_id, Conversation.user_id == user_id)
-    if lock:
-        statement = statement.with_for_update()
-    conversation = db.scalar(statement)
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found.")
-    return conversation
-
-
-@app.get("/api/conversations/{conversation_id}")
-def get_conversation(
-    conversation_id: UUID,
-    user: User = Depends(require_permission("conversations:read")),
-    db: Session = Depends(get_db),
-):
-    conversation = get_owned_conversation(db, conversation_id, user.id)
-    messages = db.scalars(
-        select(ConversationMessage)
-        .where(ConversationMessage.conversation_id == conversation.id)
-        .order_by(ConversationMessage.sequence)
-    ).all()
-    return {
-        "id": str(conversation.id),
-        "title": conversation.title,
-        "collection_name": conversation.collection_name,
-        "messages": [
-            {"id": str(message.id), "role": message.role, "content": message.content, "sources": message.sources, "created_at": message.created_at}
-            for message in messages
-        ],
-    }
-
-
-@app.delete("/api/conversations/{conversation_id}", status_code=204)
-def delete_conversation(
-    conversation_id: UUID,
-    _csrf: None = Depends(require_csrf),
-    user: User = Depends(require_permission("conversations:delete")),
-    db: Session = Depends(get_db),
-):
-    conversation = get_owned_conversation(db, conversation_id, user.id)
-    db.delete(conversation)
-    db.commit()
-    return Response(status_code=204)
-
-
-@app.post("/api/conversations/{conversation_id}/ask")
-def answer_question(
-    conversation_id: UUID,
-    payload: AskRequest,
-    _csrf: None = Depends(require_csrf),
-    user: User = Depends(require_permission("conversations:write")),
-    db: Session = Depends(get_db),
-):
-    collection_name = validate_collection_name(payload.collection_name)
-    conversation = get_owned_conversation(db, conversation_id, user.id, lock=True)
-    if collection_name != conversation.collection_name:
-        conversation.collection_name = collection_name
-
-    last_sequence = db.scalar(
-        select(func.max(ConversationMessage.sequence)).where(ConversationMessage.conversation_id == conversation.id)
-    ) or 0
-    history_rows = db.scalars(
-        select(ConversationMessage)
-        .where(ConversationMessage.conversation_id == conversation.id)
-        .order_by(ConversationMessage.sequence.desc())
-        .limit(12)
-    ).all()
-    history = [{"role": message.role, "content": message.content} for message in reversed(history_rows)]
-    user_message = ConversationMessage(
-        conversation_id=conversation.id,
-        sequence=last_sequence + 1,
-        role="user",
-        content=payload.question,
-    )
-    db.add(user_message)
-    try:
-        retrieved = hybrid_search(db, payload.question, collection_name, n_results=4)
-        answer = answer_question_with_anthropic(payload.question, retrieved, history)
-        sources = [
-            {
-                "id": item["id"],
-                "source": item["metadata"].get("source", "unknown"),
-                "chunk_index": item["metadata"].get("chunk_index", 0),
-                "score": round(float(item["combined_score"]), 4),
-                "text": item["document"][:600],
-            }
-            for item in retrieved
-        ]
-        db.add(
-            ConversationMessage(
-                conversation_id=conversation.id,
-                sequence=last_sequence + 2,
-                role="assistant",
-                content=answer,
-                sources=sources,
-            )
-        )
-        if last_sequence == 0:
-            conversation.title = payload.question[:77] + ("..." if len(payload.question) > 80 else "")
-        conversation.updated_at = datetime.now(UTC)
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        logger.exception(
-            "Question answering failed",
-            extra={"user_id": str(user.id), "conversation_id": str(conversation_id)},
-        )
-        raise HTTPException(status_code=503, detail="Could not complete the answer. Check service health and retry.") from exc
-    return {"status": "ok", "answer": answer, "sources": sources}
 
 
 @app.get("/api/admin/collections")
